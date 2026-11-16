@@ -1,113 +1,122 @@
-from data import RideRequest, cities, time_slots
-from file_handle import load_cabs, save_cabs, load_requests, save_requests
+from file_handle import RideRequest, cities, time_slots
+from data import load_cabs, load_requests, save_all
+
+MENU = """
+==============================
+      Cab Sharing Menu
+==============================
+1. Add a new ride request.
+2. See everyone still waiting, plus all cabs (both open and already left).
+3. Find matches (preview).
+4. Let a cab leave.
+5. Quit the app."""
 
 
-def print_numbered(items):
+def show_list(items):
     if not items:
         print("None")
-    for i, item in enumerate(items, 1):
-        print(f"{i}. {item}")
+    for n, item in enumerate(items, start=1):
+        print(f"{n}. {item}")
 
 
-def add_ride_request(pending_requests, cabs):
+def open_cabs_of(cabs):
+    return [cab for cab in cabs if not cab.has_left]
+
+
+def add_ride_request(pending, cabs):
     print("\n--- New Ride Request ---")
     name = input("Student's name: ")
     destination = input(f"Destination ({'/'.join(cities)}): ")
     time_slot = input(f"Time slot ({'/'.join(time_slots)}): ")
     try:
         year = int(input("Year (1 to 5): "))
+    except ValueError:
+        print("Error: year must be a number from 1 to 5.")
+        return
+    try:
         request = RideRequest(name, destination, time_slot, year)
     except ValueError as err:
         print(f"Error: {err}")
         return
-    pending_requests.append(request)
+    pending.append(request)
+    save_all(cabs, pending)
     print(f"Added request: {request}")
 
 
-def view_status(pending_requests, cabs):
+def view_status(pending, cabs):
     print("\n=== Students Currently Waiting ===")
-    print_numbered(pending_requests)
+    show_list(pending)
     print("\n=== Open Cabs ===")
-    print_numbered([c for c in cabs if not c.has_left])
+    show_list(open_cabs_of(cabs))
     print("\n=== Already Left ===")
-    print_numbered([c for c in cabs if c.has_left])
+    show_list([cab for cab in cabs if cab.has_left])
 
 
-def find_matches(pending_requests, cabs):
+def find_matches(pending, cabs):
     print("\n=== Match Preview (No Seats Assigned) ===")
-    open_cabs = [c for c in cabs if not c.has_left]
+    open_cabs = open_cabs_of(cabs)
     if not open_cabs:
         print("No open cabs available.")
         return
 
-    pool = list(pending_requests)  # copy
-    for i, cab in enumerate(open_cabs, 1):
-        print(f"\n{i}. Cab: {cab.driver_name} -> {cab.destination} [{cab.time_slot}] "
+    taken = []  # so two cabs on the same route don't preview the same student
+    for n, cab in enumerate(open_cabs, start=1):
+        print(f"\n{n}. Cab: {cab.driver_name} -> {cab.destination} [{cab.time_slot}] "
               f"(Available seats: {cab.free_seats()}/{cab.seats})")
-        matched = cab.matches(pool)
-        if not matched:
+        matches = [r for r in cab.matching(pending) if r not in taken][:cab.free_seats()]
+        taken.extend(matches)
+        if not matches:
             print("Matched students: None")
-        for student in matched:
-            print(f"- {student.student_name} (Year {student.year}) | Submitted: {student.submitted_at}")
-            pool.remove(student)
+        for r in matches:
+            print(f"- {r.student_name} (Year {r.year}) | Submitted: {r.submitted_at}")
 
 
-def dispatch_cab(pending_requests, cabs):
+def dispatch_cab(pending, cabs):
     print("\n=== Let a Cab Leave ===")
-    open_cabs = [c for c in cabs if not c.has_left]
+    open_cabs = open_cabs_of(cabs)
     if not open_cabs:
         print("No open cabs available to send off.")
         return
-    print_numbered(open_cabs)
 
+    show_list(open_cabs)
     choice = input("Choose an open cab to dispatch (0 to cancel): ").strip()
-    if not choice.isdigit() or not 0 <= int(choice) <= len(open_cabs):
-        print("Invalid choice.")
-        return
     if choice == "0":
         print("Dispatch cancelled.")
         return
+    if not choice.isdigit() or not 1 <= int(choice) <= len(open_cabs):
+        print("Invalid choice.")
+        return
 
     cab = open_cabs[int(choice) - 1]
-    boarded = cab.dispatch(pending_requests)
+    boarded = cab.dispatch(pending)
+    save_all(cabs, pending)
+
     print(f"\nDispatched: {cab.driver_name} -> {cab.destination} [{cab.time_slot}] "
           f"| Final Seats: {len(cab.students)}/{cab.seats}")
     if boarded:
         print("Newly boarded students (removed from waiting list):")
-        for student in boarded:
-            print(f"  - {student.student_name} (Year {student.year})")
+        for s in boarded:
+            print(f"  - {s.student_name} (Year {s.year})")
     else:
         print("No new waiting students boarded.")
 
 
-MENU = {
-    "1": ("Add a new ride request.", add_ride_request),
-    "2": ("See everyone still waiting, plus all cabs.", view_status),
-    "3": ("Find matches (preview).", find_matches),
-    "4": ("Let a cab leave.", dispatch_cab),
-}
-
-
 def main():
     cabs = load_cabs()
-    pending_requests = load_requests()
+    pending = load_requests()
+    actions = {"1": add_ride_request, "2": view_status, "3": find_matches, "4": dispatch_cab}
 
     while True:
-        print("\n===== Cab Sharing Menu =====")
-        for key, (label, _) in MENU.items():
-            print(f"{key}. {label}")
-        print("5. Quit the app.")
-
+        print(MENU)
         choice = input("Choose an option (1-5): ").strip()
         if choice == "5":
-            save_cabs(cabs)
-            save_requests(pending_requests)
+            save_all(cabs, pending)
             print("Data saved. Goodbye!")
             break
-        if choice in MENU:
-            MENU[choice][1](pending_requests, cabs)
+        if choice in actions:
+            actions[choice](pending, cabs)
         else:
-            print("Please enter a number from 1 to 5.")
+            print("Invalid option.")
 
 
 if __name__ == "__main__":
